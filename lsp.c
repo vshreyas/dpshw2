@@ -62,8 +62,8 @@ void *send_thread(void *a)
 {/*
     lsp_client *info = (lsp_client *) a;
     int fd = info->sock;
-    struct sockaddr_in serveraddr = info->serveraddr;
-    socklen_t serverlen = sizeof (info->serveraddr);
+    struct sockaddr_in serveraddr = info->addr;
+    socklen_t serverlen = sizeof (info->addr);
     int n;
     // LSP message - using protobuf
     lsp_packet pkt;
@@ -116,7 +116,7 @@ void* recv_thread(void* a)
     int n;
     lsp_client* info = (lsp_client*) a;
     int fd = info->sock;
-    struct sockaddr_in serveraddr = info->serveraddr;
+    struct sockaddr_in serveraddr = info->addr;
     socklen_t serverlen = sizeof (serveraddr);
     char buf[LEN];
     lsp_packet pkt;
@@ -162,14 +162,36 @@ void* recv_thread(void* a)
 
 void* epoch_thread(void* a)
 {
+    char buf[LEN];
     lsp_client* info = (lsp_client*)a;
     int fd = info->sock;
-    struct sockaddr_in serveraddr = info->serveraddr;
-    socklen_t serverlen = sizeof(info->serveraddr);
+    struct sockaddr_in serveraddr = info->addr;
+    socklen_t serverlen = sizeof(info->addr);
     int n;
     lsp_packet pkt;
-    pkt.connid = info->id;
+    //Send connection request
+    int tries = 0;
+    while(info->rcvd_ack < 0 && tries < 5) {
+        memset(buf, 0, LEN);
+        pkt.connid = 0;
+        pkt.seqnum = 0;
+        sprintf((char*)pkt.payload, "");
+        memcpy(buf, &pkt, sizeof (pkt));
+        serverlen = sizeof (serveraddr);
+        n = sendto(fd, buf, sizeof (pkt), 0, (const sockaddr*) &serveraddr, serverlen);
+        if (n < 0) {
+            perror("ERROR in sendto");
+            //exit(0);
+        }
+        tries++;
+        sleep(2);
+    }
+    if(tries == 5) {
+        printf("No reply to connection request");
+        exit(0);
+    }
 
+    pkt.connid = info->id;
     info->timeouts = 0;
     bool idle;
     int prev_ack = 0;
@@ -260,37 +282,36 @@ lsp_client* lsp_client_create(const char* src, int port)
           (char *) &serveraddr.sin_addr.s_addr, server->h_length);
     serveraddr.sin_port = htons(port);
 
-    memset(buf, 0, LEN);
+    a_client->sock = sockfd;
+    a_client->addr = serveraddr;
+    a_client->sent_data = 0;
+    a_client->rcvd_data = 0;
+    a_client->sent_ack = 0;
+    a_client->rcvd_ack = -1;
+    pthread_create(&(a_client->tid2), NULL, &epoch_thread, (void*) a_client);
     lsp_packet pkt;
+    /*
+    memset(buf, 0, LEN);
     pkt.connid = 0;
     pkt.seqnum = 0;
     sprintf((char*)pkt.payload, "");
     memcpy(buf, &pkt, sizeof (pkt));
-
-    /* send the message to the server */
     serverlen = sizeof (serveraddr);
     n = sendto(sockfd, buf, sizeof (pkt), 0, (const sockaddr*) &serveraddr, serverlen);
     if (n < 0)
         perror("ERROR in sendto");
-
-    /* print the server's reply */
+    */
+    // print the server's reply
     memset(buf, 0, sizeof (buf));
     n = recvfrom(sockfd, buf, sizeof (pkt), 0, (sockaddr*) & serveraddr, &serverlen);
     if (n < 0)
         perror("ERROR in recvfrom");
     memcpy(&pkt, buf, sizeof (pkt));
     printf("Connection accepted, packet : %d, %d, '%s'\n", pkt.connid, pkt.seqnum, pkt.payload);
-    a_client->id = pkt.connid;
-    a_client->sock = sockfd;
-    a_client->serveraddr = serveraddr;
-    a_client->sent_data = 0;
-    a_client->rcvd_data = 0;
-    a_client->sent_ack = 0;
     a_client->rcvd_ack = 0;
-
     //pthread_create(&(a_client->tid1), NULL, &send_thread, (void*) a_client);
-    pthread_create(&(a_client->tid2), NULL, &recv_thread, (void*) a_client);
-    pthread_create(&(a_client->tid3), NULL, &epoch_thread,(void*) a_client);
+    a_client->id = pkt.connid;
+    pthread_create(&(a_client->tid3), NULL, &recv_thread,(void*) a_client);
     return a_client;
 }
 

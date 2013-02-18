@@ -30,7 +30,7 @@ typedef struct
     que outbox;
     uint32_t id;
     int sock;
-    struct sockaddr_in serveraddr;
+    struct sockaddr_in addr;
     int sent_data;
     int sent_ack;
     int rcvd_data;

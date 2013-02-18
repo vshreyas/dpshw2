@@ -14,6 +14,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <map>
+#include "lsp.h"
 #include "que.h"
 #define LEN 1024
 
@@ -25,6 +27,7 @@ typedef struct
     uint8_t payload[50];
 } lsp_packet;
 
+/*
 typedef struct
 {
     que inbox;
@@ -39,14 +42,15 @@ typedef struct
     pthread_t tid1, tid2, tid3;
     int timeouts;
 } args;
+*/
 
 pthread_mutex_t mutex1;
 
 void* send_thread(void* a)
 {/*
-    args* info = (args* )a;
+    lsp_client* info = (lsp_client* )a;
     int fd = info->sock;
-    struct sockaddr_in clientaddr = info->clientaddr;
+    struct sockaddr_in clientaddr = info->addr;
     socklen_t clientlen = sizeof(clientaddr);
     int n;
     char buf[LEN];
@@ -94,9 +98,9 @@ void* send_thread(void* a)
 void* recv_thread(void* a)
 {
     int n;
-    args* info = (args*) a;
+    lsp_client* info = (lsp_client*) a;
     int fd = info->sock;
-    struct sockaddr_in clientaddr = info->clientaddr;
+    struct sockaddr_in clientaddr = info->addr;
     socklen_t clientlen = sizeof (clientaddr);
     char buf[LEN];
     lsp_packet pkt;
@@ -144,10 +148,10 @@ void* recv_thread(void* a)
 void* epoch_thread(void* a)
 {
     char buf[LEN];
-    args* info = (args*)a;
+    lsp_client* info = (lsp_client*)a;
     int fd = info->sock;
-    struct sockaddr_in clientaddr = info->clientaddr;
-    socklen_t clientlen = sizeof(info->clientaddr);
+    struct sockaddr_in clientaddr = info->addr;
+    socklen_t clientlen = sizeof(info->addr);
     int n;
     lsp_packet pkt;
     pkt.connid = info->id;
@@ -278,11 +282,11 @@ int main()
                (struct sockaddr *) &clientaddr, clientlen);
     if (n < 0)
         perror("ERROR in sendto");
-    //fill args to pass the threads;
-    args info;
+    //fill lsp_client to pass the threads;
+    lsp_client info;
     info.id = pkt.connid;
     info.sock = sockfd;
-    info.clientaddr = clientaddr;
+    info.addr = clientaddr;
     info.sent_data = 0;
     info.rcvd_data = 0;
     info.sent_ack = 0;
@@ -294,10 +298,9 @@ int main()
     char s[10];
     info.outbox.enque(msg);info.outbox.enque(msg);info.outbox.enque(msg);info.outbox.enque(msg);
     sleep(10);
-    info.inbox.deque(s);printf("From main: appln reads '%s'\n", s);
-    info.inbox.deque(s);printf("From main: appln reads '%s'\n", s);
-    info.inbox.deque(s);printf("From main: appln reads '%s'\n", s);
-    info.inbox.deque(s);printf("From main: appln reads '%s'\n", s);
+    while(info.inbox.deque(s) > 0) {
+        printf("From main: appln reads '%s'\n", s);
+    }
     /*
     while(true) {
         sleep(1);
