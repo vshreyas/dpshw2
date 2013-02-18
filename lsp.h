@@ -5,14 +5,13 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include <stdbool.h>
-#include <sys/types.h>
+#include <cstddef>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <pthread.h>
-#include <errno.h>
+#include <cerrno>
 #include <strings.h>
-#include <errno.h>
-#include <string.h>
+#include <cstring>
 #include "que.h"
 
 // Global Parameters. For both server and clients.
@@ -32,10 +31,10 @@ typedef struct
     uint32_t id;
     int sock;
     struct sockaddr_in serveraddr;
-    int seq_recv;
-    int seq_send;
-    int seq_acked;
-    int last_sent;
+    int sent_data;
+    int sent_ack;
+    int rcvd_data;
+    int rcvd_ack;
     pthread_t tid1, tid2, tid3;
     int timeouts;
 

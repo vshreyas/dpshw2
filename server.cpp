@@ -14,7 +14,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
-#include <signal.h>
+#include "que.h"
 #define LEN 1024
 
 using namespace std;
@@ -27,18 +27,23 @@ typedef struct
 
 typedef struct
 {
+    que inbox;
+    que outbox;
     uint32_t id;
     int sock;
     struct sockaddr_in clientaddr;
-    int seq_send;
-    int seq_recv;
-    int last_acked;
+    int sent_data;
+    int sent_ack;
+    int rcvd_data;
+    int rcvd_ack;
+    pthread_t tid1, tid2, tid3;
+    int timeouts;
 } args;
 
 pthread_mutex_t mutex1;
 
 void* send_thread(void* a)
-{
+{/*
     args* info = (args* )a;
     int fd = info->sock;
     struct sockaddr_in clientaddr = info->clientaddr;
@@ -67,7 +72,7 @@ void* send_thread(void* a)
             else last_sent++;
         }
         //printf("Server send thread Last acked: %d, info->seq_recv: %d\n",info->last_acked,info->seq_recv );
-        /*
+
         if (info->last_acked == info->seq_recv - 1)
         {
             pkt.seqnum = info->seq_recv - 1;
@@ -81,65 +86,144 @@ void* send_thread(void* a)
             }
             else info->last_acked++;
         }
-        */
-    }
+
+    } */
     return NULL;
 }
 
 void* recv_thread(void* a)
 {
     int n;
-    args* info = (args* )a;
+    args* info = (args*) a;
     int fd = info->sock;
     struct sockaddr_in clientaddr = info->clientaddr;
-    socklen_t clientlen = sizeof(clientaddr);
+    socklen_t clientlen = sizeof (clientaddr);
     char buf[LEN];
     lsp_packet pkt;
-    memset(buf, 0 , LEN);
-    while(1) {
-        //sleep(2);
-        n = recvfrom(fd, buf, sizeof(pkt), 0, (sockaddr*)&clientaddr, &clientlen);
-        if(n < 0)
-        {
-            perror("ERROR Receiving in rcv_thread");
-        }
+    memset(buf, 0, LEN);
+    while (1)
+    {
+        n = recvfrom(fd, buf, sizeof (pkt), 0, (sockaddr*) & clientaddr, &clientlen);
         memcpy(&pkt, buf, sizeof(pkt));
-        printf("Server rcv thread got %d, %d, '%s'", pkt.connid, pkt.seqnum, pkt.payload);
-        if(pkt.payload[0] == '\0'){
-            if(pkt.seqnum == info->seq_send) {
+        printf("Server rcv thread got Packet %d %d '%s'",pkt.connid, pkt.seqnum, pkt.payload);
+        if (n < 0)
+        {
+            perror("ERROR Receiving in receiving thread\n");
+        }
+        if(pkt.payload[0] == '\0')
+        {
+            if(pkt.seqnum == info->sent_data)
+            {
                 printf("ACK recieved for message#%d\n", pkt.seqnum);
-                info->seq_send++;
+                info->outbox.deque((char*)pkt.payload) ;
+                if(info->rcvd_ack == info->sent_data - 1)info->rcvd_ack++;
             }
             else printf("Duplicate ACK\n");
         }
-        else {
-            if(pkt.seqnum == info->seq_recv)
+        else
+        {
+            if(pkt.seqnum == info->sent_ack + 1)
             {
-                printf(" -> server rcv data packet #%d\n", info->seq_recv);
-                info->seq_recv++;
+                printf(" -> server rcv data packet #%d\n", pkt.seqnum);
+                //pthread_mutex_
+                if(info->inbox.enque((char*)pkt.payload))
+                    info->rcvd_data = info->sent_ack + 1;
+                else fprintf(stderr, "Queue full");
+                //pthread_mutex_
             }
-            else if(pkt.seqnum == info->seq_recv - 1)
+            else if(pkt.seqnum == info->sent_ack)
             {
                 printf(" -> server rcvd duplicate data packet#%d, must resend ACK\n", pkt.seqnum);
-                info->last_acked = pkt.seqnum;
             }
-            else printf(" -> server rcvd out of order client malfunctioning, terminating \n");
+            else printf(" -> server rcvd out of order Server malfunctioning, sending \n");
         }
     }
     return NULL;
 }
 
-/*
-void handler(int sig)
+void* epoch_thread(void* a)
 {
-    printf("alarm rang\n");
+    char buf[LEN];
+    args* info = (args*)a;
+    int fd = info->sock;
+    struct sockaddr_in clientaddr = info->clientaddr;
+    socklen_t clientlen = sizeof(info->clientaddr);
+    int n;
+    lsp_packet pkt;
+    pkt.connid = info->id;
+    info->timeouts = 0;
+    bool idle;
+    int prev_ack = 0;
+    int prev_data = 0;
+    while(1)
+    {
+        sleep(2);
+        idle = true;
+        if(info->sent_ack == info->rcvd_data - 1 || info->sent_ack == info->rcvd_data)
+        {
+            if(info->timeouts == 5){
+                printf("No communications from client, disconnecting\n");
+                close(info->sock);
+                //free(info);
+                exit(0);
+            }
+            pkt.seqnum = info->rcvd_data;
+            sprintf((char *) pkt.payload, "");
+            memset(buf, 0, LEN);
+            memcpy(buf, &pkt, sizeof (pkt));
+            printf("Timeout! from epoch handler Sending ack%d\n", pkt.seqnum);
+            n = sendto(fd, buf, sizeof (pkt), 0, (const sockaddr*) &clientaddr, clientlen);
+            if (n < 0)
+            {
+                perror("Error in sending ack");
+            }
+            else
+            {
+                info->sent_ack = info->rcvd_data;
+                if(info->sent_ack != prev_ack)idle = false;
+                prev_ack = info->sent_ack;
+            }
+        }
+
+        if(info->sent_data == info->rcvd_ack || info->sent_data == info->rcvd_ack + 1)
+        {
+            //todo protobuf
+            pkt.seqnum = info->rcvd_ack + 1;
+            //
+            int rv = info->outbox.que_empty();
+            //sprintf((char*)pkt.payload, "x%d", pkt.seqnum);
+            if(rv !=0) {
+                info->outbox.peek((char*)pkt.payload);
+                printf("Timeout! from epoch handler Sending %s %d\n", pkt.payload, pkt.seqnum);
+                //msg defn in common.h
+                //Send a data for testing
+                memset(buf, 0, LEN);
+                memcpy(buf, &pkt, sizeof(pkt));
+                n = sendto(fd, buf, sizeof(pkt), 0, (const sockaddr*)&clientaddr, clientlen);
+                if(n < 0)
+                {
+                    perror("ERROR Sending data send_thread");
+                }
+                else
+                {
+                    info->sent_data = info->rcvd_ack + 1;
+                    if(info->sent_data != prev_data)idle = false;
+                    prev_data = info->sent_data;
+                }
+            }
+        }
+        if(idle == true)info->timeouts++;
+        else info->timeouts = 0;
+
+    }
+    return NULL;
 }
-*/
+
 int main()
 {
     int sockfd; /* socket */
     int portno; /* port to listen on */
-    int clientlen; /* byte size of client's address */
+    socklen_t clientlen; /* byte size of client's address */
     struct sockaddr_in serveraddr; /* server's addr */
     struct sockaddr_in clientaddr; /* client addr */
     struct hostent *hostp; /* client host info */
@@ -149,7 +233,7 @@ int main()
     int n; /* message byte size */
     portno = 2700;
     lsp_packet pkt;
-    pthread_t tid1, tid2;
+    pthread_t tid1, tid2, tid3;
     //create parent socket
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0)
@@ -199,13 +283,33 @@ int main()
     info.id = pkt.connid;
     info.sock = sockfd;
     info.clientaddr = clientaddr;
-    info.seq_send = 1;
-    info.seq_recv = 1;
-    info.last_acked = 1;
-    //signal(SIGALRM, &handler);
-    pthread_create(&tid1, NULL, &send_thread, (void*)&info);
+    info.sent_data = 0;
+    info.rcvd_data = 0;
+    info.sent_ack = 0;
+    info.rcvd_ack = 0;
+    //pthread_create(&tid1, NULL, &send_thread, (void*)&info);
     pthread_create(&tid2, NULL, &recv_thread, (void*)&info);
-    pthread_join(tid1, NULL);
-    pthread_join(tid1, NULL);
+    pthread_create(&tid3, NULL, &epoch_thread, (void*)&info);
+    const char* msg = "ser hi";
+    char s[10];
+    info.outbox.enque(msg);info.outbox.enque(msg);info.outbox.enque(msg);info.outbox.enque(msg);
+    sleep(10);
+    info.inbox.deque(s);printf("From main: appln reads '%s'\n", s);
+    info.inbox.deque(s);printf("From main: appln reads '%s'\n", s);
+    info.inbox.deque(s);printf("From main: appln reads '%s'\n", s);
+    info.inbox.deque(s);printf("From main: appln reads '%s'\n", s);
+    /*
+    while(true) {
+        sleep(1);
+        info.outbox.enque(msg);
+        if(info.inbox.que_empty() != 0 && rand() %2 == 0 ){
+            info.inbox.deque(s);
+            printf("From main: appln reads '%s'\n", s);
+        }
+    }
+    */
+    //pthread_join(tid1, NULL);
+    pthread_join(tid2, NULL);
+    pthread_join(tid3, NULL);
     return 0;
 }

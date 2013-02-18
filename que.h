@@ -1,4 +1,4 @@
-/* 
+/*
  * File:   Queue.h
  * Author: JEYENTH
  *
@@ -7,19 +7,16 @@
 
 #ifndef QUE_H
 #define	QUE_H
-#include<queue>
 #include<string>
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <netdb.h>
-#include <sys/types.h> 
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <iostream>
-
+#include <pthread.h>
 
 using namespace std;
 
@@ -27,14 +24,17 @@ class que {
     char payload [10000][50];
     int tail;
     int head;
+    pthread_mutex_t mutex1;
 public:
     que()
     {
         tail=head=1;
+        pthread_mutex_init(&mutex1, NULL);
     }
     ~que()
     {
         tail=head=0;
+        pthread_mutex_destroy(&mutex1);
     }
 
     int que_full() {
@@ -45,63 +45,67 @@ public:
     }
 
     int que_empty() {
+        pthread_mutex_lock(&mutex1);
         int i=1;
         if (head == tail)
             i=0;
+        pthread_mutex_unlock(&mutex1);
         return i;
     }
 
-    int enque(char *message) {
-        int n,j;
+    int enque(const char *message) {
+        int n;
+        pthread_mutex_lock(&mutex1);
         n = que_full();
         if (n == 0) {
-
+            pthread_mutex_unlock(&mutex1);
             return 0;
-        } else
-            if (tail == 10000) {
-            strcpy(payload[tail], message);
-          
-             tail = 1;
-             return 1;
         }
-        if (tail != 10000) {
+        if (tail == 10000) {
             strcpy(payload[tail], message);
-            
+            tail = 1;
+            pthread_mutex_unlock(&mutex1);
+            return 1;
+        }
+        else {
+            strcpy(payload[tail], message);
             tail++;
+            pthread_mutex_unlock(&mutex1);
             return 1;
         }
     }
 
     int deque(char *message) {
         int n = 0;
+        pthread_mutex_lock(&mutex1);
         n = que_empty();
         if (n == 0) {
-           
+            pthread_mutex_unlock(&mutex1);
             return 0;
         } else {
             strcpy(message,payload[head]);
-            
             strcpy(payload[head],"");
             if (head == 10000) {
                 head = 1;
             } else
                 head++;
         }
+        pthread_mutex_unlock(&mutex1);
         return 1;
     }
-    
+
     int peek(char *message)
     {
         int n=1;
+        pthread_mutex_lock(&mutex1);
         n=que_empty();
         if(n==0)
         {
+            pthread_mutex_unlock(&mutex1);
             return 0;
         }
-        if(n!=0)
-        {
-            strcpy(message,payload[head]);
-        }
+        else strcpy(message,payload[head]);
+        pthread_mutex_unlock(&mutex1);
         return 1;
     }
 
