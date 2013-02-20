@@ -116,7 +116,8 @@ void* recv_thread(void* a)
     int n;
     lsp_client* info = (lsp_client*) a;
     int fd = info->sock;
-    struct sockaddr_in serveraddr = info->addr;
+    struct sockaddr_in serveraddr;
+    memcpy(&serveraddr, &(info->addr), sizeof(serveraddr));
     socklen_t serverlen = sizeof (serveraddr);
     char buf[LEN];
     lsp_packet pkt;
@@ -171,7 +172,7 @@ void* epoch_thread(void* a)
     lsp_packet pkt;
     //Send connection request
     int tries = 0;
-    while(info->rcvd_ack < 0 && tries < 5) {
+    while(info->rcvd_ack < 0 && tries < 25) {
         memset(buf, 0, LEN);
         pkt.connid = 0;
         pkt.seqnum = 0;
@@ -183,6 +184,7 @@ void* epoch_thread(void* a)
             perror("ERROR in sendto");
             //exit(0);
         }
+        else printf("Sent a conn req\n");
         tries++;
         sleep(2);
     }
@@ -203,7 +205,7 @@ void* epoch_thread(void* a)
         idle = true;
         if(info->sent_ack == info->rcvd_data - 1 || info->sent_ack == info->rcvd_data)
         {
-            if(info->timeouts == 5){
+            if(info->timeouts == 15){
                 printf("No communications from server, disconnecting\n");
                 close(info->sock);
                 free(info);
@@ -283,7 +285,7 @@ lsp_client* lsp_client_create(const char* src, int port)
     serveraddr.sin_port = htons(port);
 
     a_client->sock = sockfd;
-    a_client->addr = serveraddr;
+    memcpy(&(a_client->addr), &serveraddr, sizeof (serveraddr));
     a_client->sent_data = 0;
     a_client->rcvd_data = 0;
     a_client->sent_ack = 0;
