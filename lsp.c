@@ -131,6 +131,8 @@ void* recv_thread(void* a)
         {
             perror("ERROR Receiving in receiving thread\n");
         }
+
+        info->timeouts = 0;
         if(pkt.payload[0] == '\0')
         {
             if(pkt.seqnum == info->sent_data)
@@ -194,7 +196,6 @@ void* epoch_thread(void* a)
     }
 
     pkt.connid = info->id;
-    info->timeouts = 0;
     bool idle;
     int prev_ack = 0;
     int prev_data = 0;
@@ -202,10 +203,10 @@ void* epoch_thread(void* a)
     while(true)
     {
         sleep(2);
-        idle = true;
+        info->timeouts++;
         if(info->sent_ack == info->rcvd_data - 1 || info->sent_ack == info->rcvd_data)
         {
-            if(info->timeouts == 15){
+            if(info->timeouts == 5){
                 printf("No communications from server, disconnecting\n");
                 close(info->sock);
                 free(info);
@@ -224,8 +225,6 @@ void* epoch_thread(void* a)
             else
             {
                 info->sent_ack = info->rcvd_data;
-                if(info->sent_ack != prev_ack)idle = false;
-                prev_ack = info->sent_ack;
             }
         }
 
@@ -249,14 +248,9 @@ void* epoch_thread(void* a)
                 else
                 {
                     info->sent_data = info->rcvd_ack + 1;
-                    if(info->sent_data != prev_data)idle = false;
-                    prev_data = info->sent_data;
                 }
             }
         }
-        if(idle == true)info->timeouts++;
-        else info->timeouts = 0;
-
     }
     return NULL;
 }

@@ -30,37 +30,21 @@ typedef struct
 
 typedef struct
 {
-    map<int, lsp_client> info;
+    //map<int, lsp_client> info;
     int fd;
 } args;
 
 map<int, lsp_client> info;
-/*
-typedef struct
-{
-    que inbox;
-    que outbox;
-    uint32_t id;
-    int sock;
-    struct sockaddr_in clientaddr;
-    int sent_data;
-    int sent_ack;
-    int rcvd_data;
-    int rcvd_ack;
-    pthread_t tid1, tid2, tid3;
-    int timeouts;
-} args;
-*/
 
 void dump(std::map<int, lsp_client> const& m)
 {
     for(std::map<int, lsp_client>::const_iterator i(m.begin()), j(m.end());
 i != j; ++i)
-        std::cout << '[' << i->first << "] = " << "{id "<< i->second.id <<",sock "
+        std::cout << "[" << i->first << "] = " << "{id "<< i->second.id <<",sock "
             << i->second.sock <<",sent_data "<<i->second.sent_data<<", rcvd_data"<< i->second.rcvd_data <<", sent_ack"<<i->second.sent_ack<<", rcvd_ack"<<i->second.rcvd_ack<<'\n';
 }
 
-pthread_mutex_t mutex1;
+pthread_mutex_t lock_info;
 
 void* send_thread(void* a)
 {
@@ -107,9 +91,9 @@ void* send_thread(void* a)
                }
                else info->last_acked++;
            }
-
-       } */
+       }
     return NULL;
+    */
 }
 
 void* recv_thread(void* a)
@@ -123,12 +107,15 @@ void* recv_thread(void* a)
     memset(buf, 0, LEN);
     lsp_packet pkt;
     int fd = ((args*)a)->fd;
-    printf("fd %d\n", fd);
     while (1)
     {
         n = recvfrom(fd, buf, sizeof (pkt), 0, (sockaddr*) &clientaddr, &clientlen);
         memcpy(&pkt, buf, sizeof(pkt));
         printf("Server rcv thread got Packet %d %d '%s'",pkt.connid, pkt.seqnum, pkt.payload);
+        map<int, lsp_client>::iterator it = info.find(pkt.connid);
+        if(it!= info.end()) {
+            it->second.timeouts = 0;
+        }
         if (n < 0)
         {
             perror("ERROR Receiving in receiving thread\n");
@@ -156,34 +143,34 @@ void* recv_thread(void* a)
                     cli.rcvd_data = 0;
                     cli.sent_ack = 0;
                     cli.rcvd_ack = -1;
-                    info.insert(pair<int, lsp_client>((int)cli.id, cli));
+                    *it.insert(pair<int, lsp_client>((int)cli.id, cli));
 
                 }
                 else fprintf(stderr, "Bad connection request");
             }
             else
             {
-                if(pkt.seqnum == info[pkt.connid].sent_data)
+                if(pkt.seqnum == *it.sent_data)
                 {
                     printf("ACK recieved for message#%d\n", pkt.seqnum);
-                    info[pkt.connid].outbox.deque((char*)pkt.payload) ;
-                    if(info[pkt.connid].rcvd_ack == info[pkt.connid].sent_data - 1)info[pkt.connid].rcvd_ack++;
+                    *it.outbox.deque((char*)pkt.payload) ;
+                    if(*it.rcvd_ack == *it.sent_data - 1)*it.rcvd_ack++;
                 }
                 else printf("Duplicate ACK\n");
             }
         }
         else
         {
-            if(pkt.seqnum == info[pkt.connid].sent_ack + 1)
+            if(pkt.seqnum == *it.sent_ack + 1)
             {
                 printf(" -> server rcv data packet #%d\n", pkt.seqnum);
                 //pthread_mutex_
-                if(info[pkt.connid].inbox.enque((char*)pkt.payload))
-                    info[pkt.connid].rcvd_data = info[pkt.connid].sent_ack + 1;
+                if(*it.inbox.enque((char*)pkt.payload))
+                    *it.rcvd_data = *it.sent_ack + 1;
                 else fprintf(stderr, "Queue full");
                 //pthread_mutex_
             }
-            else if(pkt.seqnum == info[pkt.connid].sent_ack)
+            else if(pkt.seqnum == *it.sent_ack)
             {
                 printf(" -> server rcvd duplicate data packet#%d, must resend ACK\n", pkt.seqnum);
             }
@@ -201,10 +188,6 @@ void* epoch_thread(void* a)
     socklen_t clientlen;
     lsp_packet pkt;
     int fd = ((args*)a)->fd;
-    //info->timeouts = 0;
-    bool idle;
-    int prev_ack = 0;
-    int prev_data = 0;
     while(1)
     {
         sleep(2);
@@ -212,6 +195,7 @@ void* epoch_thread(void* a)
         printf("Map contains %d entries\n", info.size());
         for(it = info.begin(); it != info.end(); ++it)
         {
+            it->second.timeouts++;
             memcpy(&clientaddr, &it->second.addr, sizeof(clientaddr));
             clientlen = sizeof(clientaddr);
             struct hostent *hostp; /* client host info */
@@ -245,7 +229,6 @@ void* epoch_thread(void* a)
             }
             else
             {
-                idle = true;
                 if(it->second.sent_ack == it->second.rcvd_data - 1 || it->second.sent_ack == it->second.rcvd_data)
                 {
                     if(it->second.timeouts == 5)
@@ -268,8 +251,6 @@ void* epoch_thread(void* a)
                     else
                     {
                         it->second.sent_ack = it->second.rcvd_data;
-                        if(it->second.sent_ack != prev_ack)idle = false;
-                        prev_ack = it->second.sent_ack;
                     }
                 }
 
@@ -296,13 +277,9 @@ void* epoch_thread(void* a)
                         else
                         {
                             it->second.sent_data = it->second.rcvd_ack + 1;
-                            if(it->second.sent_data != prev_data)idle = false;
-                            prev_data = it->second.sent_data;
                         }
                     }
                 }
-                if(idle == true)it->second.timeouts++;
-                else it->second.timeouts = 0;
             }
         }
         sleep(2);
@@ -336,13 +313,11 @@ int main()
         perror("ERROR on binding");
     args ar;
     ar.fd = sockfd;
-    printf("sockfd %d", sockfd);
     pthread_create(&tid2, NULL, &recv_thread, (void*)&ar);
     pthread_create(&tid3, NULL, &epoch_thread, (void*)&ar);
     const char* msg = "ser hi";
     char s[10];
-
-    /*
+    while(info.size() == 0)usleep(10);
     info.begin()->second.outbox.enque(msg);
     info.begin()->second.outbox.enque(msg);
     info.begin()->second.outbox.enque(msg);
@@ -352,7 +327,6 @@ int main()
     {
         printf("From main: appln reads '%s'\n", s);
     }
-    */
     pthread_join(tid2, NULL);
     pthread_join(tid3, NULL);
     return 0;
