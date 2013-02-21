@@ -49,6 +49,43 @@ void lsp_set_drop_rate(double rate)
     drop_rate = rate;
 }
 
+/*
+uint8_t* message_encode(int conn_id,int seq_no,const char* payload,int& outlength)
+{
+    int len;
+    LSPMessage msg = LSPMESSAGE__INIT;
+    msg.connid = conn_id;
+    msg.seqnum = seq_no;
+    msg.payload.data = (uint8_t *)malloc(sizeof(uint8_t) * (strlen(payload)+1));
+    msg.payload.len = strlen(payload)+1;
+    memcpy(msg.payload.data, payload, (strlen(payload)+1)*sizeof(uint8_t));
+    len = lspmessage__get_packed_size(&msg);
+    //cout<<"len" <<len<<" strlen "<<strlen(payload);
+    uint8_t* buffer = (uint8_t *)malloc(len);
+    lspmessage__pack(&msg, buffer);
+    outlength=len;
+    free(msg.payload.data);
+    return buffer;
+
+}
+
+int message_decode(int len,uint8_t* buf, lsp_packet& pkt)
+{
+
+    LSPMessage* msg=lspmessage__unpack(NULL, len, buf);
+    pkt.conn_id=msg->connid;
+    pkt.seq_no=msg->seqnum;
+    memcpy(pkt.data,msg->payload.data,msg->payload.len);
+    //cout<<" Conn_id "<<pkt.conn_id<<"\n";
+    //cout<<" Seq Num "<<pkt.seq_no<<"\n";
+    //cout<<" payload data"<<pkt.data<<"\n";
+    //cout<<" payload len"<<msg->payload.len<<"\n";
+    //if(pkt.data[0]=='\0')cout<<"true" ;else cout<<"false";
+    return msg->payload.len;
+}
+
+*/
+
 
 /*
  *
@@ -111,6 +148,7 @@ void *send_thread(void *a)
     }*/
     return NULL;
 }
+
 void* recv_thread(void* a)
 {
     int n;
@@ -365,6 +403,7 @@ int main()
     lsp_client* clip = lsp_client_create("127.0.0.1", 2700);
     const char* msg = "cli hi";
     char s[15];
+    lsp_client_write(clip, (uint8_t*)msg, 3);lsp_client_write(clip, (uint8_t*)msg, 3);lsp_client_write(clip, (uint8_t*)msg, 3);
     lsp_client_write(clip, (uint8_t*)msg, 3);lsp_client_write(clip, (uint8_t*)msg, 3);lsp_client_write(clip, (uint8_t*)msg, 3);
     sleep(10);
     while(lsp_client_read(clip, (uint8_t*)s) > 0){
