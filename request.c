@@ -1,17 +1,26 @@
 #include "lsp_client.h"
 #include <cstdio>
 
-int main()
+int main(int argc, char* argv[])
 {
     lsp_client* clip = lsp_client_create("127.0.0.1", 2700);
-    const char* msg = "cli hi";
-    char s[15];
-    //lsp_client_write(clip, (uint8_t*)msg, 3);lsp_client_write(clip, (uint8_t*)msg, 3);lsp_client_write(clip, (uint8_t*)msg, 3);
-    lsp_client_write(clip, (uint8_t*)msg, 3);lsp_client_write(clip, (uint8_t*)msg, 3);lsp_client_write(clip, (uint8_t*)msg, 3);
-    sleep(10);
-    while(lsp_client_read(clip, (uint8_t*)s) > 0){
-        printf("From main: appln reads '%s'\n", s);
+    char payload[100];
+    if(argc < 3) {
+        fprintf(stderr, "run as ./request lower upper\n");
+        exit(0);
     }
+    char* hash = argv[1];;
+    char* lower = argv[2];
+    char* upper = argv[3];
+    if(strlen(lower) > 5 || strlen(upper) > 5) {
+        fprintf(stderr, "Sorry, the range is too long for the current version.\n");
+        exit(0);
+    }
+    sprintf(payload, "c %s %s %s", hash, lower, upper);
+    lsp_client_write(clip, (uint8_t*)payload, strlen(payload));
+    char pass[20];
+    lsp_client_read(clip, (uint8_t*)pass);
+    printf("Cracked password %s", pass);
     lsp_client_close(clip);
     return 0;
 }

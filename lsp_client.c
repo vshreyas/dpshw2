@@ -226,7 +226,7 @@ void* epoch_thread(void* a)
         }
         else printf("Sent a conn req\n");
         tries++;
-        sleep(2);
+        sleep(epoch_lth);
     }
     if(tries == 5) {
         printf("No reply to connection request");
@@ -240,7 +240,7 @@ void* epoch_thread(void* a)
 
     while(true)
     {
-        sleep(2);
+        sleep(epoch_lth);
         info->timeouts++;
         if(info->sent_ack == info->rcvd_data - 1 || info->sent_ack == info->rcvd_data)
         {

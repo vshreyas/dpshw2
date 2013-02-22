@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <map>
+#include <stack>
 #include "lsp.h"
 #include "que.h"
 #include <iostream>
@@ -52,7 +53,9 @@ typedef struct
 } args;
 
 map<int, lsp_client> info;
+stack<int> dead;
 pthread_mutex_t lock_info;
+pthread_mutex_t lock_dead;
 /*
  *
  *
@@ -85,9 +88,9 @@ void* recv_thread(void* a)
     while (1)
     {
         n = recvfrom(fd, buf, sizeof (pkt), 0, (sockaddr*) &clientaddr, &clientlen);
-        if (n < 0)
+        if (n < 0 || rand() % 10 == 0)
         {
-            perror("ERROR Receiving in receiving thread\n");
+            perror("ERROR Receiving in receiving thread or Packet drop\n");
             continue;
         }
         memcpy(&pkt, buf, sizeof(pkt));
@@ -192,6 +195,7 @@ void* epoch_thread(void* a)
             if(it->second.timeouts == 5)
             {
                 //printf("No communications from client, disconnecting\n");
+                dead.push(it->first);
                 info.erase(it++);
                 if(pthread_mutex_unlock(&lock_info) < 0)perror("Mutex in epochthread");
 
@@ -285,7 +289,7 @@ void* epoch_thread(void* a)
             }
         }
         if(pthread_mutex_unlock(&lock_info) < 0)perror("Mutex in epochthread");
-        sleep(2);
+        sleep(epoch_lth);
     }
     return NULL;
 }
@@ -335,6 +339,12 @@ int lsp_server_read(lsp_server* a_srv, void* pld, uint32_t* conn_id)
     map<int, lsp_client>::iterator it;
     char* payload = (char*)pld;
     payload[0] = '\0';
+    pthread_mutex_lock(&lock_dead);
+    if(!dead.empty()) {
+        *conn_id = dead.top();
+        dead.pop();
+        return -1;
+    }
     while(strlen(payload) == 0) {
         pthread_mutex_lock(&lock_info);
         for(it = info.begin();it != info.end();++it) {
@@ -347,7 +357,7 @@ int lsp_server_read(lsp_server* a_srv, void* pld, uint32_t* conn_id)
         pthread_mutex_unlock(&lock_info);
         usleep(100);
     }
-
+    pthread_mutex_unlock(&lock_dead);
     return strlen((char*)pld);
 }
 
@@ -368,10 +378,14 @@ bool lsp_server_write(lsp_server* a_srv, void* pld, int lth, uint32_t conn_id)
  */
 bool lsp_server_close(lsp_server* a_srv, uint32_t conn_id)
 {
+    return true;
+}
+
+void lsp_server_cleanup(lsp_server* a_srv)
+{
     pthread_join(a_srv->tid2, NULL);
     pthread_join(a_srv->tid3, NULL);
     pthread_mutex_destroy(&lock_info);
     //close()
     delete a_srv;
-    return true;
 }
