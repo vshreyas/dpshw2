@@ -48,7 +48,10 @@ bool lsp_client_close(lsp_client* a_client);
 
 typedef struct
 {
-
+    int fd;
+    pthread_t tid1;
+    pthread_t tid2;
+    pthread_t tid3;
 } lsp_server;
 
 
