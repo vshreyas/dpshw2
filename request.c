@@ -16,6 +16,7 @@ int main(int argc, char* argv[])
         fprintf(stderr, "Sorry, the range is too long for the current version.\n");
         exit(0);
     }
+    memset(payload, 0, 60);
     sprintf(payload, "c %s %s %s", hash, lower, upper);
     lsp_client_write(clip, (uint8_t*)payload, strlen(payload));
     char pass[20];

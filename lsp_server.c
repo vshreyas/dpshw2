@@ -9,7 +9,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <map>
-#include <stack>
+#include <queue>
 #include "lsp.h"
 #include "que.h"
 #include <iostream>
@@ -43,7 +43,7 @@ typedef struct
 {
     uint32_t connid;
     uint32_t seqnum;
-    uint8_t payload[50];
+    uint8_t payload[100];
 } lsp_packet;
 
 typedef struct
@@ -53,7 +53,7 @@ typedef struct
 } args;
 
 map<int, lsp_client> info;
-stack<int> dead;
+queue<int> dead;
 pthread_mutex_t lock_info;
 pthread_mutex_t lock_dead;
 /*
@@ -68,7 +68,7 @@ void dump(std::map<int, lsp_client> const& m)
 {
     for(std::map<int, lsp_client>::const_iterator i(m.begin()), j(m.end());
             i != j; ++i)
-        std::cout << "[" << i->first << "] = " << "{id "<< i->second.id <<",sock "
+        std::cout << "nfo[" << i->first << "] = " << "{id "<< i->second.id <<",sock "
                   << i->second.sock <<",sent_data "<<i->second.sent_data<<", rcvd_data"<< i->second.rcvd_data
                   <<", sent_ack"<<i->second.sent_ack<<", rcvd_ack "<<i->second.rcvd_ack<<"port "<< htons(i->second.addr.sin_port)<<"}\n";
 }
@@ -88,7 +88,7 @@ void* recv_thread(void* a)
     while (1)
     {
         n = recvfrom(fd, buf, sizeof (pkt), 0, (sockaddr*) &clientaddr, &clientlen);
-        if (n < 0 || rand() % 10 == 0)
+        if (n < 0 || rand() % 10 == 10)
         {
             perror("ERROR Receiving in receiving thread or Packet drop\n");
             continue;
@@ -188,14 +188,15 @@ void* epoch_thread(void* a)
     while(1)
     {
         if(pthread_mutex_lock(&lock_info) < 0)perror("Mutex in epochthread");
-        dump(info);
+        //dump(info);
         map<int, lsp_client>::iterator it = info.begin();
         while(it != info.end())
         {
             if(it->second.timeouts == 5)
             {
-                //printf("No communications from client, disconnecting\n");
+                pthread_mutex_lock(&lock_dead);
                 dead.push(it->first);
+                pthread_mutex_unlock(&lock_dead);
                 info.erase(it++);
                 if(pthread_mutex_unlock(&lock_info) < 0)perror("Mutex in epochthread");
 
@@ -214,8 +215,7 @@ void* epoch_thread(void* a)
                 hostaddrp = inet_ntoa(clientaddr.sin_addr);
                 if (hostaddrp == NULL)
                     perror("ERROR on inet_ntoa\n");
-                printf("Replying to client: %d, %s (%s) on port %u\n",it->second.id,
-                       hostp->h_name, hostaddrp, ntohs(it->second.addr.sin_port));
+                //printf("Replying to client: %d, %s (%s) on port %u\n",it->second.id,  hostp->h_name, hostaddrp, ntohs(it->second.addr.sin_port));
                 if(it->second.id == 0)
                 {
                     // reply to conn req
@@ -322,6 +322,7 @@ lsp_server* lsp_server_create(int port)
         perror("ERROR on binding");
     serv->fd = sockfd;
     pthread_mutex_init(&lock_info, NULL);
+    pthread_mutex_init(&lock_dead, NULL);
     pthread_create(&tid2, NULL, &recv_thread, (void*)serv);
     pthread_create(&tid3, NULL, &epoch_thread, (void*)serv);
     serv->tid2 = tid2;
@@ -341,10 +342,10 @@ int lsp_server_read(lsp_server* a_srv, void* pld, uint32_t* conn_id)
     payload[0] = '\0';
     pthread_mutex_lock(&lock_dead);
     if(!dead.empty()) {
-        *conn_id = dead.top();
-        dead.pop();
+        *conn_id = dead.front();
         return -1;
     }
+    pthread_mutex_unlock(&lock_dead);
     while(strlen(payload) == 0) {
         pthread_mutex_lock(&lock_info);
         for(it = info.begin();it != info.end();++it) {
@@ -357,7 +358,6 @@ int lsp_server_read(lsp_server* a_srv, void* pld, uint32_t* conn_id)
         pthread_mutex_unlock(&lock_info);
         usleep(100);
     }
-    pthread_mutex_unlock(&lock_dead);
     return strlen((char*)pld);
 }
 
@@ -368,7 +368,9 @@ bool lsp_server_write(lsp_server* a_srv, void* pld, int lth, uint32_t conn_id)
 {
     bool success = false;
     pthread_mutex_lock(&lock_info);
-    success = (info[conn_id].outbox.enque((const char*)pld) > 0);
+    if(info.find(conn_id) != info.end())
+        success = (info[conn_id].outbox.enque((const char*)pld) > 0);
+    else success = false;
     pthread_mutex_unlock(&lock_info);
     return success;
 }
@@ -378,6 +380,35 @@ bool lsp_server_write(lsp_server* a_srv, void* pld, int lth, uint32_t conn_id)
  */
 bool lsp_server_close(lsp_server* a_srv, uint32_t conn_id)
 {
+    pthread_mutex_lock(&lock_dead);
+    if(!dead.empty()) {
+        if(dead.front() == conn_id)
+            dead.pop();
+    }
+    pthread_mutex_unlock(&lock_dead);
+    pthread_mutex_lock(&lock_info);
+    if(info.find(conn_id) != info.end())
+    {
+        if(info[conn_id].outbox.que_empty() != 0)
+        {
+            struct sockaddr_in clientaddr = info[conn_id].addr;
+            socklen_t clientlen = sizeof(clientaddr);
+            lsp_packet pkt;
+            pkt.connid = conn_id;
+            pkt.seqnum = info[conn_id].rcvd_ack + 1;
+            info[conn_id].outbox.peek((char*)pkt.payload);
+            char buf[LEN];
+            memset(buf, 0, LEN);
+            memcpy(buf, &pkt, sizeof(pkt));
+            int n = sendto(a_srv->fd, buf, sizeof(pkt), 0, (const sockaddr*)&clientaddr, clientlen);
+            if(n < 0)
+            {
+                perror("ERROR Sending data lsp_server_close");
+            }
+        }
+        info.erase(conn_id);
+    }
+    pthread_mutex_unlock(&lock_info);
     return true;
 }
 

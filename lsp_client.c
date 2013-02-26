@@ -21,7 +21,7 @@ typedef struct
 {
     uint32_t connid;
     uint32_t seqnum;
-    uint8_t payload[50];
+    uint8_t payload[100];
 } lsp_packet;
 
 double epoch_lth = _EPOCH_LTH;
@@ -164,7 +164,7 @@ void* recv_thread(void* a)
     {
         n = recvfrom(fd, buf, sizeof (pkt), 0, (sockaddr*) & serveraddr, &serverlen);
         memcpy(&pkt, buf, sizeof(pkt));
-        printf("Client rcv thread got Packet %d %d '%s'",pkt.connid, pkt.seqnum, pkt.payload);
+        //printf("Client rcv thread got Packet %d %d '%s'",pkt.connid, pkt.seqnum, pkt.payload);
         if (n < 0)
         {
             perror("ERROR Receiving in receiving thread\n");
@@ -175,7 +175,7 @@ void* recv_thread(void* a)
         {
             if(pkt.seqnum == info->sent_data)
             {
-                printf("ACK recieved for message#%d\n", pkt.seqnum);
+                //printf("ACK recieved for message#%d\n", pkt.seqnum);
                 if(pkt.seqnum == info->rcvd_ack + 1)info->outbox.deque((char*)pkt.payload) ;
                 if(info->rcvd_ack == info->sent_data - 1)info->rcvd_ack++;
             }
@@ -212,7 +212,7 @@ void* epoch_thread(void* a)
     lsp_packet pkt;
     //Send connection request
     int tries = 0;
-    while(info->rcvd_ack < 0 && tries < 25) {
+    while(info->rcvd_ack < 0 && tries < epoch_cnt) {
         memset(buf, 0, LEN);
         pkt.connid = 0;
         pkt.seqnum = 0;
