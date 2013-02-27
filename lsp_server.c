@@ -53,6 +53,7 @@ typedef struct
 } args;
 
 map<int, lsp_client> info;
+vector<lsp_client>reqs;
 queue<int> dead;
 pthread_mutex_t lock_info;
 pthread_mutex_t lock_dead;
@@ -72,13 +73,128 @@ void dump(std::map<int, lsp_client> const& m)
                   << i->second.sock <<",sent_data "<<i->second.sent_data<<", rcvd_data"<< i->second.rcvd_data
                   <<", sent_ack"<<i->second.sent_ack<<", rcvd_ack "<<i->second.rcvd_ack<<"port "<< htons(i->second.addr.sin_port)<<"}\n";
 }
+/*
+void* send_thread(void* a)
+{
+    char buf[LEN];
+    int n;
+    struct sockaddr_in clientaddr;
+    socklen_t clientlen;
+    lsp_packet pkt;
+    int fd = ((lsp_server*)a)->fd;
+    while(1)
+    {
+        for(int i = 0; i < reqs.size(); i++) {
+            pkt.connid=rand();
+            pkt.seqnum=0;
+            sprintf((char*)pkt.payload, "");
+            memcpy(buf,&pkt, sizeof(pkt));
+            n = sendto(fd, buf, sizeof(pkt), 0,
+                       (struct sockaddr *) &clientaddr, clientlen);
+            if (n < 0)
+                perror("ERROR in sendto");
+            lsp_client cli;
+            memcpy(&cli, &reqs[i], sizeof(lsp_client));
+            cli.id = pkt.connid;
+            info.insert(pair<int, lsp_client>(pkt.connid, cli));
+            printf("After inserting: ");
+            dump(info);
 
+        }
+        reqs.clear();
+        if(pthread_mutex_lock(&lock_info) < 0)perror("Mutex in epochthread");
+        //dump(info);
+        map<int, lsp_client>::iterator it = info.begin();
+        while(it != info.end())
+        {
+
+            memcpy(&clientaddr, &(it->second.addr), sizeof(clientaddr));
+            clientlen = sizeof(clientaddr);
+
+
+            //printf("Replying to client: %d, %s (%s) on port %u\n",it->second.id,  hostp->h_name, hostaddrp, ntohs(it->second.addr.sin_port));
+            if(it->second.id == 0)
+            {
+                // reply to conn req
+                //printf("replying to conn req\n");
+                pkt.connid=rand();
+                pkt.seqnum=0;
+                sprintf((char*)pkt.payload, "");
+                memcpy(buf,&pkt, sizeof(pkt));
+                n = sendto(fd, buf, sizeof(pkt), 0,
+                           (struct sockaddr *) &clientaddr, clientlen);
+                if (n < 0)
+                    perror("ERROR in sendto");
+                lsp_client cli;
+                memcpy(&cli, &(it->second), sizeof(lsp_client));
+                cli.id = pkt.connid;
+                info.insert(pair<int, lsp_client>(pkt.connid, cli));
+                //printf("After inserting: ");
+                dump(info);
+                info.erase(it++);
+                //printf("After erasing: ");
+                dump(info);
+            }
+            else
+            {
+                if(it->second.sent_ack == it->second.rcvd_data - 1)
+                {
+                    pkt.seqnum = it->second.rcvd_data;
+                    sprintf((char *) pkt.payload, "");
+                    memset(buf, 0, LEN);
+                    memcpy(buf, &pkt, sizeof (pkt));
+                    //printf("Timeout! from epoch handler Sending ack%d\n", pkt.seqnum);
+                    n = sendto(fd, buf, sizeof (pkt), 0, (const sockaddr*) &clientaddr, clientlen);
+                    if (n < 0)
+                    {
+                        perror("Error in sending ack");
+                    }
+                    else
+                    {
+                        it->second.sent_ack = it->second.rcvd_data;
+                    }
+                }
+
+                if(it->second.sent_data == it->second.rcvd_ack || it->second.sent_data == it->second.rcvd_ack + 1)
+                {
+                    //todo protobuf
+                    pkt.seqnum = it->second.rcvd_ack + 1;
+                    //
+                    int rv = it->second.outbox.que_empty();
+                    //sprintf((char*)pkt.payload, "x%d", pkt.seqnum);
+                    if(rv !=0)
+                    {
+                        it->second.outbox.peek((char*)pkt.payload);
+                        //printf("Timeout! from epoch handler Sending %s %d\n", pkt.payload, pkt.seqnum);
+                        //msg defn in common.h
+                        //Send a data for testing
+                        memset(buf, 0, LEN);
+                        memcpy(buf, &pkt, sizeof(pkt));
+                        n = sendto(fd, buf, sizeof(pkt), 0, (const sockaddr*)&clientaddr, clientlen);
+                        if(n < 0)
+                        {
+                            perror("ERROR Sending data send_thread");
+                        }
+                        else
+                        {
+                            it->second.sent_data = it->second.rcvd_ack + 1;
+                        }
+                    }
+                }
+                ++it;
+            }
+        }
+        if(pthread_mutex_unlock(&lock_info) < 0)perror("Mutex in epochthread");
+    }
+    return NULL;
+}
+*/
 
 void* recv_thread(void* a)
 {
     int n;
-    struct hostent *hostp; /* client host info */
-    char *hostaddrp; /* dotted decimal host addr string */
+    struct hostent *hostp;
+    char *hostaddrp;
     struct sockaddr_in clientaddr;
     socklen_t clientlen = sizeof(clientaddr);
     char buf[LEN];
@@ -88,13 +204,13 @@ void* recv_thread(void* a)
     while (1)
     {
         n = recvfrom(fd, buf, sizeof (pkt), 0, (sockaddr*) &clientaddr, &clientlen);
-        if (n < 0 || rand() % 10 == 10)
+        if (n < 0 || (rand()/(float)RAND_MAX) < drop_rate)
         {
             perror("ERROR Receiving in receiving thread or Packet drop\n");
             continue;
         }
         memcpy(&pkt, buf, sizeof(pkt));
-        //printf("Server rcv thread got Packet %d %d '%s'",pkt.connid, pkt.seqnum, pkt.payload);
+        printf("Server rcv thread got Packet %d %d '%s'",pkt.connid, pkt.seqnum, pkt.payload);
         pthread_mutex_lock(&lock_info);
         map<int, lsp_client>::iterator it = info.find(pkt.connid);
         if(it!= info.end())
@@ -139,9 +255,13 @@ void* recv_thread(void* a)
                         cli.sent_ack = 0;
                         cli.rcvd_ack = -1;
                         cli.timeouts = 0;
-                        info.insert(pair<int, lsp_client>((int)cli.id, cli));
-                        //printf("After new conn inserted by recv_thread: ");
-                        dump(info);
+                        reqs.push_back(cli);
+                        //info.insert(pair<int, lsp_client>((int)cli.id, cli));
+                        printf("conn reqs from ports: ");
+                        for(int i = 0; i < reqs.size();i++)printf("%u, ", ntohs(reqs[i].addr.sin_port));
+                        printf("\n");
+
+                        //dump(info);
                     }
                 }
                 else fprintf(stderr, "Bad connection request");
@@ -168,7 +288,7 @@ void* recv_thread(void* a)
             }
             else if(pkt.seqnum == it->second.sent_ack)
             {
-                //printf(" -> server rcvd duplicate data packet#%d, must resend ACK\n", pkt.seqnum);
+                printf(" -> server rcvd duplicate data packet#%d, must resend ACK\n", pkt.seqnum);
             }
             else printf(" -> server rcvd out of order Server malfunctioning, sending \n");
         }
@@ -187,8 +307,25 @@ void* epoch_thread(void* a)
     int fd = ((lsp_server*)a)->fd;
     while(1)
     {
+        for(int i = 0;i < reqs.size(); i++) {
+            lsp_client cli;
+            memcpy(&cli, &reqs[i], sizeof(lsp_client));
+            cli.id = rand();
+            info.insert(pair<int, lsp_client>(cli.id, cli));
+            printf("After inserting %d: ", cli.id);
+            dump(info);
+
+            pkt.connid = cli.id;
+            pkt.seqnum = 0;
+            sprintf((char*)pkt.payload, "");
+            memcpy(buf,&pkt, sizeof(pkt));
+            n = sendto(fd, buf, sizeof(pkt), 0, (struct sockaddr *) &cli.addr, sizeof(cli.addr));
+            if (n < 0) perror("ERROR in sendto");
+        }
+        reqs.clear();
         if(pthread_mutex_lock(&lock_info) < 0)perror("Mutex in epochthread");
-        //dump(info);
+        printf("Now iterating over: ");
+        dump(info);
         map<int, lsp_client>::iterator it = info.begin();
         while(it != info.end())
         {
@@ -206,86 +343,62 @@ void* epoch_thread(void* a)
                 it->second.timeouts++;
                 memcpy(&clientaddr, &(it->second.addr), sizeof(clientaddr));
                 clientlen = sizeof(clientaddr);
-                struct hostent *hostp; /* client host info */
-                char *hostaddrp; /* dotted decimal host addr string */
-                hostp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr,
-                                      sizeof(clientaddr.sin_addr.s_addr), AF_INET);
+                struct hostent *hostp; // client host info
+                char *hostaddrp; // dotted decimal host addr string
+                hostp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr,sizeof(clientaddr.sin_addr.s_addr), AF_INET);
                 if (hostp == NULL)
                     perror("ERROR on gethostbyaddr");
                 hostaddrp = inet_ntoa(clientaddr.sin_addr);
                 if (hostaddrp == NULL)
                     perror("ERROR on inet_ntoa\n");
-                //printf("Replying to client: %d, %s (%s) on port %u\n",it->second.id,  hostp->h_name, hostaddrp, ntohs(it->second.addr.sin_port));
-                if(it->second.id == 0)
+                printf("Replying to client: %d, %s (%s) on port %u\n",it->second.id,  hostp->h_name, hostaddrp, ntohs(it->second.addr.sin_port));
+                if(it->second.sent_ack == it->second.rcvd_data - 1 || it->second.sent_ack == it->second.rcvd_data)
                 {
-                    // reply to conn req
-                    //printf("replying to conn req\n");
-                    pkt.connid=rand();
-                    pkt.seqnum=0;
-                    sprintf((char*)pkt.payload, "");
-                    memcpy(buf,&pkt, sizeof(pkt));
-                    n = sendto(fd, buf, sizeof(pkt), 0,
-                               (struct sockaddr *) &clientaddr, clientlen);
+                    pkt.connid = it->first;
+                    pkt.seqnum = it->second.rcvd_data;
+                    sprintf((char *) pkt.payload, "");
+                    memset(buf, 0, LEN);
+                    memcpy(buf, &pkt, sizeof (pkt));
+                    printf("Timeout! from epoch handler Sending ack%d\n", pkt.seqnum);
+                    n = sendto(fd, buf, sizeof (pkt), 0, (const sockaddr*) &clientaddr, clientlen);
                     if (n < 0)
-                        perror("ERROR in sendto");
-                    lsp_client cli;
-                    memcpy(&cli, &(it->second), sizeof(lsp_client));
-                    cli.id = pkt.connid;
-                    info.insert(pair<int, lsp_client>(pkt.connid, cli));
-                    //printf("After inserting: ");
-                    dump(info);
-                    info.erase(it++);
-                    //printf("After erasing: ");
-                    dump(info);
-                }
-                else
-                {
-                    if(it->second.sent_ack == it->second.rcvd_data - 1 || it->second.sent_ack == it->second.rcvd_data)
                     {
-                        pkt.seqnum = it->second.rcvd_data;
-                        sprintf((char *) pkt.payload, "");
+                        perror("Error in sending ack");
+                    }
+                    else
+                    {
+                        it->second.sent_ack = it->second.rcvd_data;
+                    }
+                }
+
+                if(it->second.sent_data == it->second.rcvd_ack || it->second.sent_data == it->second.rcvd_ack + 1)
+                {
+                    //todo protobuf
+                    pkt.connid = it->first;
+                    pkt.seqnum = it->second.rcvd_ack + 1;
+                    //
+                    int rv = it->second.outbox.que_empty();
+                    //sprintf((char*)pkt.payload, "x%d", pkt.seqnum);
+                    if(rv !=0)
+                    {
+                        it->second.outbox.peek((char*)pkt.payload);
+                        printf("Timeout! from epoch handler Sending %s %d\n", pkt.payload, pkt.seqnum);
+                        //msg defn in common.h
+                        //Send a data for testing
                         memset(buf, 0, LEN);
-                        memcpy(buf, &pkt, sizeof (pkt));
-                        //printf("Timeout! from epoch handler Sending ack%d\n", pkt.seqnum);
-                        n = sendto(fd, buf, sizeof (pkt), 0, (const sockaddr*) &clientaddr, clientlen);
-                        if (n < 0)
+                        memcpy(buf, &pkt, sizeof(pkt));
+                        n = sendto(fd, buf, sizeof(pkt), 0, (const sockaddr*)&clientaddr, clientlen);
+                        if(n < 0)
                         {
-                            perror("Error in sending ack");
+                            perror("ERROR Sending data send_thread");
                         }
                         else
                         {
-                            it->second.sent_ack = it->second.rcvd_data;
+                            it->second.sent_data = it->second.rcvd_ack + 1;
                         }
                     }
-
-                    if(it->second.sent_data == it->second.rcvd_ack || it->second.sent_data == it->second.rcvd_ack + 1)
-                    {
-                        //todo protobuf
-                        pkt.seqnum = it->second.rcvd_ack + 1;
-                        //
-                        int rv = it->second.outbox.que_empty();
-                        //sprintf((char*)pkt.payload, "x%d", pkt.seqnum);
-                        if(rv !=0)
-                        {
-                            it->second.outbox.peek((char*)pkt.payload);
-                            //printf("Timeout! from epoch handler Sending %s %d\n", pkt.payload, pkt.seqnum);
-                            //msg defn in common.h
-                            //Send a data for testing
-                            memset(buf, 0, LEN);
-                            memcpy(buf, &pkt, sizeof(pkt));
-                            n = sendto(fd, buf, sizeof(pkt), 0, (const sockaddr*)&clientaddr, clientlen);
-                            if(n < 0)
-                            {
-                                perror("ERROR Sending data send_thread");
-                            }
-                            else
-                            {
-                                it->second.sent_data = it->second.rcvd_ack + 1;
-                            }
-                        }
-                    }
-                    ++it;
                 }
+                ++it;
             }
         }
         if(pthread_mutex_unlock(&lock_info) < 0)perror("Mutex in epochthread");
@@ -324,6 +437,7 @@ lsp_server* lsp_server_create(int port)
     pthread_mutex_init(&lock_info, NULL);
     pthread_mutex_init(&lock_dead, NULL);
     pthread_create(&tid2, NULL, &recv_thread, (void*)serv);
+    //pthread_create(&tid1, NULL, &send_thread, (void*)serv);
     pthread_create(&tid3, NULL, &epoch_thread, (void*)serv);
     serv->tid2 = tid2;
     serv->tid3 = tid3;
@@ -343,6 +457,7 @@ int lsp_server_read(lsp_server* a_srv, void* pld, uint32_t* conn_id)
     pthread_mutex_lock(&lock_dead);
     if(!dead.empty()) {
         *conn_id = dead.front();
+        pthread_mutex_unlock(&lock_dead);
         return -1;
     }
     pthread_mutex_unlock(&lock_dead);

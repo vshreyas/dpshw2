@@ -129,7 +129,12 @@ int main(int argc, char** argv)
             printf("Lost connection with %d\n", connid);
             lsp_server_close(myserver, connid);
             available.erase(connid);
+            if(assigned.find(connid) != assigned.end()) {
+                pending.push_front(assigned[connid]);
+            }
+            assigned.erase(connid);
             dump();
+            display(assigned);
         }
         //printf("Server got message %s from %d, replying.\n", pld, connid);
         else
