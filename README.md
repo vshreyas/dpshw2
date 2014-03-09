@@ -1,6 +1,7 @@
 Distributed Password Cracker
 ============================
 Implemented by Shreyas Vinayakumar, Jeyenth Veerarahavan for CSCE 662 Distributed Systems by Radu Stoleru
+
 A basic distributed system that can harness the power of many processors to speed up a compute-intensive task
 in the face of packet loss and an unreliable network
 
@@ -33,29 +34,35 @@ To remove old executables and build files
 
 How to run
 ============================
- The server is started using the following command, specifying the port
+- The server is started using the following command, specifying the port
 number for the server to use:
-./server port
- One or more workers are started using the following command, specifying
+
+    ./server port
+
+-	One or more workers are started using the following command, specifying
 the address and port number of the server:
-./worker host:port
- When a worker starts, it sends a join request message to the server,
+
+    ./worker host:port
+
+- When a worker starts, it sends a join request message to the server,
 letting the server know that it is available.
- The user generates a cracking request by giving the following command,
+
+- The user generates a cracking request by giving the following command,
 specifying the address and port of the server, the hash signature
 to be inverted, and the length of the password
 ./request host:port hash len
- The request client should generate a crack request message giving lower
+
+- The request client should generate a crack request message giving lower
 and upper values aa...a and zz...z, where the number of a’s and z’s is
 based on the length of the desired password.
  
- Output
- ============================
- If it finds password pass, it should print
+Output
+============================
+-If it finds password pass, it should print
 Found: pass
- If it does not find a password, it should print
+- If it does not find a password, it should print
 Not Found
- If the client loses the connection to the server, it should print
+- If the client loses the connection to the server, it should print
 Disconnected
 
 Additional features
