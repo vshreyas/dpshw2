@@ -30,6 +30,7 @@ public:
 deque<request> pending;
 map<int, request> assigned;
 set<int> available;
+map<int, int> subranges;
 
 void dump(deque<request> q)
 {
@@ -49,6 +50,17 @@ void display(map<int, request> m)
     for(it = m.begin(); it !=m.end(); ++it)
     {
         printf("(%d,%d), ", it->first, it->second.connid);
+    }
+    printf("]\n");
+}
+
+void display(map<int, int> m)
+{
+    map<int, int>::iterator it;
+    printf("subranges[");
+    for(it = m.begin();it != m.end();++it)
+    {
+        printf("(%d,%d), ", it->first, it->second);
     }
     printf("]\n");
 }
@@ -114,7 +126,10 @@ vector<request> divide_range(request r, int n)
 
 int main(int argc, char** argv)
 {
-    lsp_server* myserver = lsp_server_create(2700);
+    int port;
+    if(argc < 1) port = 2700;
+    else port = atoi(argv[1]);
+    lsp_server* myserver = lsp_server_create(port);
     char pld[LEN];
     int connid;
     int bytes = 0;
@@ -133,6 +148,7 @@ int main(int argc, char** argv)
                 pending.push_front(assigned[connid]);
             }
             assigned.erase(connid);
+            subranges.erase(connid);
             dump();
             display(assigned);
         }
@@ -155,6 +171,7 @@ int main(int argc, char** argv)
                 sprintf(pld, "c %s %s %s", r.hash, r.lower, r.higher);
 
                 vector<request> v = divide_range(r, 10);
+                subranges.insert(pair<int,int>(r.connid, 11));
                 printf("{");
                 for(vector<request>::iterator i = v.begin(); i != v.end(); ++i)
                 {
@@ -241,42 +258,60 @@ int main(int argc, char** argv)
                 if(success)
                 {
                     lsp_server_close(myserver, cust);
-                    assigned.erase(connid);
-                    available.insert(connid);
-                    dump();
-                    //pending.erase(cust);
-                    if(!pending.empty())
-                    {
-                        set<int>::iterator it = available.begin();
-                        while(!available.empty())
-                        {
-                            if(!pending.empty())
-                            {
-                                curr = pending.front();
-                                int drone = *it;
-                                assigned.insert(pair<int, request>(drone, curr));
-                                sprintf(pld, "c %s %s %s", curr.hash, curr.lower, curr.higher);
-                                lsp_server_write(myserver, pld, strlen(pld), drone);
-                                printf("Before allocating\n");
-                                dump();
-                                printf("Aftre allocating\n");
-                                ++it;
-                                available.erase(drone);
-                                dump();
-                                display(assigned);
-                                pending.pop_front();
-                            }
-                            else break;
-                        }
-                    }
                 }
                 else fprintf(stderr,"Error sending passwrod back to customer\n");
+                assigned.erase(connid);
+                available.insert(connid);
+                dump();
+                //pending.erase(cust);
+                if(!pending.empty())
+                {
+                    set<int>::iterator it = available.begin();
+                    while(!available.empty())
+                    {
+                        if(!pending.empty())
+                        {
+                            curr = pending.front();
+                            int drone = *it;
+                            assigned.insert(pair<int, request>(drone, curr));
+                            sprintf(pld, "c %s %s %s", curr.hash, curr.lower, curr.higher);
+                            lsp_server_write(myserver, pld, strlen(pld), drone);
+                            printf("Before allocating\n");
+                            dump();
+                            printf("Aftre allocating\n");
+                            ++it;
+                            available.erase(drone);
+                            dump();
+                            display(assigned);
+                            pending.pop_front();
+                        }
+                        else break;
+                    }
+                }
             }
             else if(pld[0] == 'x')
             {
-                printf("not found says worker %d\n", connid);
+                printf("not found says worker %d", connid);
                 available.insert(connid);
-
+                int cust;
+                if(assigned.find(connid) != assigned.end()) {
+                    cust = assigned[connid].connid;
+                    printf("assigned to %d", cust);
+                }
+                else {
+                    printf("unassigned zombie\n");
+                    continue;
+                }
+                display(subranges);
+                if(subranges.find(cust) != subranges.end()) {
+                    --subranges[cust];
+                    printf("# ranges left for %d are %d", cust, subranges[cust]);
+                    if(subranges[cust] == 0) {
+                        printf("No password for client %d\n", cust);
+                        lsp_server_write(myserver, pld, strlen(pld), cust);
+                        subranges.erase(cust);
+                    }
+                }
                 assigned.erase(connid);
                 set<int>::iterator it = available.begin();
                 while(!available.empty())

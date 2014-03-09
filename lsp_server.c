@@ -210,7 +210,7 @@ void* recv_thread(void* a)
             continue;
         }
         memcpy(&pkt, buf, sizeof(pkt));
-        printf("Server rcv thread got Packet %d %d '%s'",pkt.connid, pkt.seqnum, pkt.payload);
+        //printf("Server rcv thread got Packet %d %d '%s'",pkt.connid, pkt.seqnum, pkt.payload);
         pthread_mutex_lock(&lock_info);
         map<int, lsp_client>::iterator it = info.find(pkt.connid);
         if(it!= info.end())
@@ -257,9 +257,9 @@ void* recv_thread(void* a)
                         cli.timeouts = 0;
                         reqs.push_back(cli);
                         //info.insert(pair<int, lsp_client>((int)cli.id, cli));
-                        printf("conn reqs from ports: ");
-                        for(int i = 0; i < reqs.size();i++)printf("%u, ", ntohs(reqs[i].addr.sin_port));
-                        printf("\n");
+                        //printf("conn reqs from ports: ");
+                        //for(int i = 0; i < reqs.size();i++)printf("%u, ", ntohs(reqs[i].addr.sin_port));
+                        //printf("\n");
 
                         //dump(info);
                     }
@@ -312,7 +312,7 @@ void* epoch_thread(void* a)
             memcpy(&cli, &reqs[i], sizeof(lsp_client));
             cli.id = rand();
             info.insert(pair<int, lsp_client>(cli.id, cli));
-            printf("After inserting %d: ", cli.id);
+            //printf("After inserting %d: ", cli.id);
             dump(info);
 
             pkt.connid = cli.id;
@@ -324,8 +324,8 @@ void* epoch_thread(void* a)
         }
         reqs.clear();
         if(pthread_mutex_lock(&lock_info) < 0)perror("Mutex in epochthread");
-        printf("Now iterating over: ");
-        dump(info);
+        //printf("Now iterating over: ");
+        //dump(info);
         map<int, lsp_client>::iterator it = info.begin();
         while(it != info.end())
         {
@@ -351,7 +351,7 @@ void* epoch_thread(void* a)
                 hostaddrp = inet_ntoa(clientaddr.sin_addr);
                 if (hostaddrp == NULL)
                     perror("ERROR on inet_ntoa\n");
-                printf("Replying to client: %d, %s (%s) on port %u\n",it->second.id,  hostp->h_name, hostaddrp, ntohs(it->second.addr.sin_port));
+                //printf("Replying to client: %d, %s (%s) on port %u\n",it->second.id,  hostp->h_name, hostaddrp, ntohs(it->second.addr.sin_port));
                 if(it->second.sent_ack == it->second.rcvd_data - 1 || it->second.sent_ack == it->second.rcvd_data)
                 {
                     pkt.connid = it->first;
@@ -359,7 +359,7 @@ void* epoch_thread(void* a)
                     sprintf((char *) pkt.payload, "");
                     memset(buf, 0, LEN);
                     memcpy(buf, &pkt, sizeof (pkt));
-                    printf("Timeout! from epoch handler Sending ack%d\n", pkt.seqnum);
+                    //printf("Timeout! from epoch handler Sending ack%d\n", pkt.seqnum);
                     n = sendto(fd, buf, sizeof (pkt), 0, (const sockaddr*) &clientaddr, clientlen);
                     if (n < 0)
                     {
@@ -382,7 +382,7 @@ void* epoch_thread(void* a)
                     if(rv !=0)
                     {
                         it->second.outbox.peek((char*)pkt.payload);
-                        printf("Timeout! from epoch handler Sending %s %d\n", pkt.payload, pkt.seqnum);
+                        //printf("Timeout! from epoch handler Sending %s %d\n", pkt.payload, pkt.seqnum);
                         //msg defn in common.h
                         //Send a data for testing
                         memset(buf, 0, LEN);
