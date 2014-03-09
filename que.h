@@ -21,7 +21,7 @@
 using namespace std;
 
 class que {
-    char payload [1000][50];
+    char payload [1000][100];
     int tail;
     int head;
     pthread_mutex_t mutex1;

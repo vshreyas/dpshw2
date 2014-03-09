@@ -17,8 +17,8 @@
 // Global Parameters. For both server and clients.
 
 #define _EPOCH_LTH 2.0
-#define _EPOCH_CNT 5;
-#define _DROP_RATE 0.0;
+#define _EPOCH_CNT 10;
+#define _DROP_RATE 0.05;
 
 void lsp_set_epoch_lth(double lth);
 void lsp_set_epoch_cnt(int cnt);
@@ -37,7 +37,7 @@ typedef struct
     int rcvd_ack;
     pthread_t tid1, tid2, tid3;
     int timeouts;
-
+    bool alive;
 } lsp_client;
 
 lsp_client* lsp_client_create(const char* dest, int port);
@@ -48,7 +48,10 @@ bool lsp_client_close(lsp_client* a_client);
 
 typedef struct
 {
-
+    int fd;
+    pthread_t tid1;
+    pthread_t tid2;
+    pthread_t tid3;
 } lsp_server;
 
 

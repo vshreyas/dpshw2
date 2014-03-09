@@ -1,363 +1,344 @@
-
-/*
- * lsp_imp_ser.cpp - lsp server implementation
- * usage: lspserver <port>
- */
-
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <string.h>
-#include <netdb.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <pthread.h>
+#include "lsp_server.h"
+#include <cstdio>
+#include <deque>
+#include <cstdlib>
+#include <cstring>
 #include <map>
-#include "lsp.h"
-#include "que.h"
-#include <iostream>
+#include <set>
+#include <vector>
+#include <cmath>
 #define LEN 1024
-
 using namespace std;
-typedef struct
+
+class request
 {
-    uint32_t connid;
-    uint32_t seqnum;
-    uint8_t payload[50];
-} lsp_packet;
-
-typedef struct
-{
-    //map<int, lsp_client> info;
-    int fd;
-} args;
-
-map<int, lsp_client> info;
-
-void dump(std::map<int, lsp_client> const& m)
-{
-    for(std::map<int, lsp_client>::const_iterator i(m.begin()), j(m.end());
-            i != j; ++i)
-        std::cout << "[" << i->first << "] = " << "{id "<< i->second.id <<",sock "
-                  << i->second.sock <<",sent_data "<<i->second.sent_data<<", rcvd_data"<< i->second.rcvd_data <<", sent_ack"<<i->second.sent_ack<<", rcvd_ack"<<i->second.rcvd_ack<<"]\n";
-}
-
-pthread_mutex_t lock_info;
-
-void* send_thread(void* a)
-{
-    /*
-       lsp_client* info = (lsp_client* )a;
-       int fd = info->sock;
-       struct sockaddr_in clientaddr = info->addr;
-       socklen_t clientlen = sizeof(clientaddr);
-       int n;
-       char buf[LEN];
-       lsp_packet pkt;
-       pkt.connid = info->id;
-       pkt.seqnum = 1;
-       int last_sent = 0;
-       while(1) {
-           if(info->seq_send != last_sent) {
-               //todo protobuf
-               pkt.seqnum = info->seq_send;
-               sprintf((char*)pkt.payload, "JOIN%d", pkt.seqnum);
-               printf("Sending JOIN%d\n", pkt.seqnum);
-               //msg defn in common.h
-               //Send a data for testing
-               memset(buf, 0, LEN);
-               memcpy(buf, &pkt, sizeof(pkt));
-               n = sendto(fd, buf, sizeof(pkt), 0, (const sockaddr*)&clientaddr, clientlen);
-               if(n < 0)
-               {
-                   perror("ERROR Sending data send_thread");
-               }
-               else last_sent++;
-           }
-           //printf("Server send thread Last acked: %d, info->seq_recv: %d\n",info->last_acked,info->seq_recv );
-
-           if (info->last_acked == info->seq_recv - 1)
-           {
-               pkt.seqnum = info->seq_recv - 1;
-               sprintf((char *) pkt.payload, "");
-               memset(buf, 0, LEN);
-               memcpy(buf, &pkt, sizeof (pkt));
-               n = sendto(fd, buf, sizeof (pkt), 0, (const sockaddr*) &clientaddr, clientlen);
-               if (n < 0)
-               {
-                   perror("Error in sending ack");
-               }
-               else info->last_acked++;
-           }
-       }
-    return NULL;
-    */
-}
-
-void* recv_thread(void* a)
-{
-    int n;
-    struct hostent *hostp; /* client host info */
-    char *hostaddrp; /* dotted decimal host addr string */
-    struct sockaddr_in clientaddr;
-    socklen_t clientlen = sizeof(clientaddr);
-    char buf[LEN];
-    memset(buf, 0, LEN);
-    lsp_packet pkt;
-    int fd = ((args*)a)->fd;
-    while (1)
+public:
+    int connid;
+    char hash[41];
+    char lower[10];
+    char higher[10];
+    request(int id, char* hvalue, char* low, char* high)
     {
-        n = recvfrom(fd, buf, sizeof (pkt), 0, (sockaddr*) &clientaddr, &clientlen);
-        if (n < 0)
+        connid = id;
+        strcpy(hvalue, hash);
+        strcpy(lower, low);
+        strcpy(higher, high);
+    }
+    request() {};
+};
+
+deque<request> pending;
+map<int, request> assigned;
+set<int> available;
+map<int, int> subranges;
+
+void dump(deque<request> q)
+{
+    deque<request>::iterator it;
+    printf("jobQ[");
+    for(it = q.begin(); it !=q.end(); ++it)
+    {
+        printf("%d, ", it->connid);
+    }
+    printf("]\n");
+}
+
+void display(map<int, request> m)
+{
+    map<int, request>::iterator it;
+    printf("assigned[");
+    for(it = m.begin(); it !=m.end(); ++it)
+    {
+        printf("(%d,%d), ", it->first, it->second.connid);
+    }
+    printf("]\n");
+}
+
+void display(map<int, int> m)
+{
+    map<int, int>::iterator it;
+    printf("subranges[");
+    for(it = m.begin();it != m.end();++it)
+    {
+        printf("(%d,%d), ", it->first, it->second);
+    }
+    printf("]\n");
+}
+
+void dump()
+{
+    printf("freelist[");
+    for(set<int>::iterator it = available.begin(); it != available.end(); ++it)
+    {
+        printf("%d, ", *it);
+    }
+    printf("]\n");
+}
+
+int convert(char *pass)
+{
+    int n = 0, sum = 0, j = 0;
+    for (int i = strlen(pass) - 1; i >= 0; i--)
+    {
+        n = pow(26.0, j);
+        sum += (pass[i] - 'a') * n;
+        j++;
+    }
+    return sum;
+}
+
+string form_string(int k, int len)
+{
+    string init = "", fin = "";
+    while (len--)
+    {
+        char ch = 'a' + (k % 26);
+        init += ch;
+        k = k / 26;
+    }
+    for (int j = init.size() - 1; j >= 0; j--)
+    {
+        fin += init[j];
+    }
+    return fin;
+
+
+}
+
+vector<request> divide_range(request r, int n)
+{
+    int start = convert(r.lower);
+    int end = convert(r.higher);
+    int width = ceil((end - start)/n);
+    vector<request> v;
+    request s;
+    s.connid = r.connid;
+    strcpy(s.hash, r.hash);
+    while(start < end)
+    {
+        strcpy(s.lower, form_string(start, strlen(r.lower)).c_str());
+        strcpy(s.higher, form_string(min(start+width, end), strlen(r.lower)).c_str());
+        v.push_back(s);
+        start += width;
+    }
+    return v;
+}
+
+int main(int argc, char** argv)
+{
+    int port;
+    if(argc < 1) port = 2700;
+    else port = atoi(argv[1]);
+    lsp_server* myserver = lsp_server_create(port);
+    char pld[LEN];
+    int connid;
+    int bytes = 0;
+    request curr;
+
+    while(true)
+    {
+        memset(pld, 0, LEN - 1);
+        bytes = lsp_server_read(myserver, pld, (uint32_t*)&connid);
+        if(bytes < 0)
         {
-            perror("ERROR Receiving in receiving thread\n");
-            continue;
-        }
-        memcpy(&pkt, buf, sizeof(pkt));
-        printf("Server rcv thread got Packet %d %d '%s'",pkt.connid, pkt.seqnum, pkt.payload);
-        pthread_mutex_lock(&lock_info);
-        map<int, lsp_client>::iterator it = info.find(pkt.connid);
-        if(it!= info.end())
-        {
-            it->second.timeouts = 0;
-        }
-        if(pkt.payload[0] == '\0')
-        {
-            if(pkt.connid == 0)
-            {
-                if(pkt.seqnum == 0 && pkt.payload[0] == '\0')
-                {
-                    hostp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr,
-                                          sizeof(clientaddr.sin_addr.s_addr), AF_INET);
-                    if (hostp == NULL)
-                        perror("ERROR on gethostbyaddr");
-                    hostaddrp = inet_ntoa(clientaddr.sin_addr);
-                    if (hostaddrp == NULL)
-                        perror("ERROR on inet_ntoa\n");
-                    printf("Got conn request: (%d, %d, Nil)from client: %s (%s) on port %u\n",pkt.connid, pkt.seqnum,
-                           hostp->h_name, hostaddrp, ntohs(clientaddr.sin_port));
-                    bool duplicate = false;
-                    for(map<int, lsp_client>::iterator tor = info.begin(); tor != info.end(); ++tor)
-                    {
-                        if(pkt.connid != tor->first)
-                        {
-                            if(memcmp(&(tor->second.addr), &clientaddr, clientlen) ==0)
-                            {
-                                duplicate = true;
-                                printf("Duplicate conn\n");
-                            }
-                        }
-                    }
-                    if(!duplicate)
-                    {
-                        lsp_client cli;
-                        cli.id = 0;
-                        cli.sock = fd;
-                        memcpy(&cli.addr, &clientaddr, clientlen);
-                        cli.sent_data = 0;
-                        cli.rcvd_data = 0;
-                        cli.sent_ack = 0;
-                        cli.rcvd_ack = -1;
-                        cli.timeouts = 0;
-                        info.insert(pair<int, lsp_client>((int)cli.id, cli));
-                    }
-                }
-                else fprintf(stderr, "Bad connection request");
+            printf("Lost connection with %d\n", connid);
+            lsp_server_close(myserver, connid);
+            available.erase(connid);
+            if(assigned.find(connid) != assigned.end()) {
+                pending.push_front(assigned[connid]);
             }
-            else
-            {
-                if(pkt.seqnum == it->second.sent_data)
-                {
-                    printf("ACK recieved for message#%d\n", pkt.seqnum);
-                    it->second.outbox.deque((char*)pkt.payload) ;
-                    if(it->second.rcvd_ack == it->second.sent_data - 1)it->second.rcvd_ack++;
-                }
-                else printf("Duplicate ACK\n");
-            }
+            assigned.erase(connid);
+            subranges.erase(connid);
+            dump();
+            display(assigned);
         }
+        //printf("Server got message %s from %d, replying.\n", pld, connid);
         else
         {
-            if(pkt.seqnum == it->second.sent_ack + 1)
+            if(pld[0]=='c')
             {
-                printf(" -> server rcv data packet #%d\n", pkt.seqnum);
-                //pthread_mutex_
-                if(it->second.inbox.enque((char*)pkt.payload))
-                    it->second.rcvd_data = it->second.sent_ack + 1;
-                else fprintf(stderr, "Queue full");
-                //pthread_mutex_
-            }
-            else if(pkt.seqnum == it->second.sent_ack)
-            {
-                printf(" -> server rcvd duplicate data packet#%d, must resend ACK\n", pkt.seqnum);
-            }
-            else printf(" -> server rcvd out of order Server malfunctioning, sending \n");
-        }
-        pthread_mutex_unlock(&lock_info);
-    }
-    return NULL;
-}
+                printf("crack request got from client %d\n", connid);
+                request r;
+                r.connid = connid;
+                char* tok = strtok(pld, " ");
+                if(tok != NULL) tok = strtok(NULL, " ");
+                strcpy(r.hash, tok);
+                if(tok != NULL) tok = strtok(NULL, " ");
+                strcpy(r.lower, tok);
+                if(tok != NULL) tok = strtok(NULL, " ");
+                strcpy(r.higher, tok);
+                if(tok==NULL)fprintf(stderr, "Corrupt LSP pkt\n");
+                sprintf(pld, "c %s %s %s", r.hash, r.lower, r.higher);
 
-void* epoch_thread(void* a)
-{
-    char buf[LEN];
-    int n;
-    struct sockaddr_in clientaddr;
-    socklen_t clientlen;
-    lsp_packet pkt;
-    int fd = ((args*)a)->fd;
-    while(1)
-    {
-        if(pthread_mutex_lock(&lock_info) < 0)perror("Mutex in epochthread");
-        map<int, lsp_client>::iterator it = info.begin();
-        while(it != info.end())
-        {
-            if(it->second.timeouts == 5)
-            {
-                printf("No communications from client, disconnecting\n");
-                info.erase(it++);
-                if(pthread_mutex_unlock(&lock_info) < 0)perror("Mutex in epochthread");
-
-            }
-            else
-            {
-                it->second.timeouts++;
-                memcpy(&clientaddr, &(it->second.addr), sizeof(clientaddr));
-                clientlen = sizeof(clientaddr);
-                struct hostent *hostp; /* client host info */
-                char *hostaddrp; /* dotted decimal host addr string */
-                hostp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr,
-                                      sizeof(clientaddr.sin_addr.s_addr), AF_INET);
-                if (hostp == NULL)
-                    perror("ERROR on gethostbyaddr");
-                hostaddrp = inet_ntoa(clientaddr.sin_addr);
-                if (hostaddrp == NULL)
-                    perror("ERROR on inet_ntoa\n");
-                printf("Replying to client: %d, %s (%s) on port %u\n",it->second.id,
-                       hostp->h_name, hostaddrp, ntohs(it->second.addr.sin_port));
-                if(it->second.id == 0)
+                vector<request> v = divide_range(r, 10);
+                subranges.insert(pair<int,int>(r.connid, 11));
+                printf("{");
+                for(vector<request>::iterator i = v.begin(); i != v.end(); ++i)
                 {
-                    // reply to conn req
-                    printf("replying to conn req\n");
-                    pkt.connid=rand();
-                    pkt.seqnum=0;
-                    sprintf((char*)pkt.payload, "");
-                    memcpy(buf,&pkt, sizeof(pkt));
-                    n = sendto(fd, buf, sizeof(pkt), 0,
-                               (struct sockaddr *) &clientaddr, clientlen);
-                    if (n < 0)
-                        perror("ERROR in sendto");
-                    lsp_client cli;
-                    memcpy(&cli, &(it->second), sizeof(lsp_client));
-                    cli.id = pkt.connid;
-                    info.insert(pair<int, lsp_client>(pkt.connid, cli));
-                    info.erase(it++);
+                    printf("[%s, %s]", i->lower, i->higher);
+                    pending.push_back(*i);
                 }
+                printf("}\n");
+                dump(pending);
+                //try to assign the job at the front
+                while(!available.empty())
+                {
+                    set<int>::iterator it = available.begin();
+                    if(!pending.empty())
+                    {
+                        curr = pending.front();
+                        int drone = *it;
+                        assigned.insert(pair<int, request>(drone, curr));
+                        sprintf(pld, "c %s %s %s", curr.hash, curr.lower, curr.higher);
+                        printf("Assigned %s to %d\n", pld, drone);
+                        lsp_server_write(myserver, pld, strlen(pld), drone);
+                        printf("Before allocating:");
+                        dump();
+                        printf("Aftre allocating:");
+                        available.erase(drone);
+                        ++it;
+                        dump();
+                        display(assigned);
+                        pending.pop_front();
+                    }
+                    else break;
+                }
+            }
+            else if(pld[0]=='j')
+            {
+                printf("join request got from worker %d\n", connid);
+                available.insert(connid);
+                dump();
+                //try to assign the job at the front of the request deque
+                while(!available.empty())
+                {
+                    set<int>::iterator it = available.begin();
+                    if(!pending.empty())
+                    {
+                        curr = pending.front();
+                        for(set<int>::iterator it = available.begin(); it != available.end(); )
+                        {
+                            int drone = *it;
+                            assigned.insert(pair<int, request>(drone, curr));
+                            sprintf(pld, "c %s %s %s", curr.hash, curr.lower, curr.higher);
+                            lsp_server_write(myserver, pld, strlen(pld), drone);
+                            printf("Before allocating\n");
+                            dump();
+                            printf("Aftre allocating\n");
+                            ++it;
+                            available.erase(drone);
+                            dump();
+                            display(assigned);
+                            pending.pop_front();
+                        }
+                    }
+                    else break;
+                }
+            }
+            else if(pld[0] == 'f')
+            {
+                printf("password found! by worker %d.", connid);
+                if(assigned.find(connid) == assigned.end())
+                {
+                    fprintf(stderr, "unassigned worker zombie\n");
+                    continue;
+                }
+                int cust = assigned[connid].connid;
+                char pld1[LEN];
+                strcpy(pld1, pld);
+                char* tok = strtok(pld, " ");
+                if(tok!=NULL) tok = strtok(NULL, " ");
                 else
                 {
-                    if(it->second.sent_ack == it->second.rcvd_data - 1 || it->second.sent_ack == it->second.rcvd_data)
+                    printf("Corrupt/malformed LSP pkt\n");
+                    continue;
+                }
+                if(tok != NULL) printf("it is %s.Sending it to cust%d\n", tok, cust);
+                bool success = lsp_server_write(myserver, pld1, strlen(pld1), cust);
+                if(success)
+                {
+                    lsp_server_close(myserver, cust);
+                }
+                else fprintf(stderr,"Error sending passwrod back to customer\n");
+                assigned.erase(connid);
+                available.insert(connid);
+                dump();
+                //pending.erase(cust);
+                if(!pending.empty())
+                {
+                    set<int>::iterator it = available.begin();
+                    while(!available.empty())
                     {
-                        pkt.seqnum = it->second.rcvd_data;
-                        sprintf((char *) pkt.payload, "");
-                        memset(buf, 0, LEN);
-                        memcpy(buf, &pkt, sizeof (pkt));
-                        printf("Timeout! from epoch handler Sending ack%d\n", pkt.seqnum);
-                        n = sendto(fd, buf, sizeof (pkt), 0, (const sockaddr*) &clientaddr, clientlen);
-                        if (n < 0)
+                        if(!pending.empty())
                         {
-                            perror("Error in sending ack");
+                            curr = pending.front();
+                            int drone = *it;
+                            assigned.insert(pair<int, request>(drone, curr));
+                            sprintf(pld, "c %s %s %s", curr.hash, curr.lower, curr.higher);
+                            lsp_server_write(myserver, pld, strlen(pld), drone);
+                            printf("Before allocating\n");
+                            dump();
+                            printf("Aftre allocating\n");
+                            ++it;
+                            available.erase(drone);
+                            dump();
+                            display(assigned);
+                            pending.pop_front();
                         }
-                        else
-                        {
-                            it->second.sent_ack = it->second.rcvd_data;
-                        }
+                        else break;
                     }
-
-                    if(it->second.sent_data == it->second.rcvd_ack || it->second.sent_data == it->second.rcvd_ack + 1)
-                    {
-                        //todo protobuf
-                        pkt.seqnum = it->second.rcvd_ack + 1;
-                        //
-                        int rv = it->second.outbox.que_empty();
-                        //sprintf((char*)pkt.payload, "x%d", pkt.seqnum);
-                        if(rv !=0)
-                        {
-                            it->second.outbox.peek((char*)pkt.payload);
-                            printf("Timeout! from epoch handler Sending %s %d\n", pkt.payload, pkt.seqnum);
-                            //msg defn in common.h
-                            //Send a data for testing
-                            memset(buf, 0, LEN);
-                            memcpy(buf, &pkt, sizeof(pkt));
-                            n = sendto(fd, buf, sizeof(pkt), 0, (const sockaddr*)&clientaddr, clientlen);
-                            if(n < 0)
-                            {
-                                perror("ERROR Sending data send_thread");
-                            }
-                            else
-                            {
-                                it->second.sent_data = it->second.rcvd_ack + 1;
-                            }
-                        }
-                    }
-                    ++it;
                 }
             }
+            else if(pld[0] == 'x')
+            {
+                printf("not found says worker %d", connid);
+                available.insert(connid);
+                int cust;
+                if(assigned.find(connid) != assigned.end()) {
+                    cust = assigned[connid].connid;
+                    printf("assigned to %d", cust);
+                }
+                else {
+                    printf("unassigned zombie\n");
+                    continue;
+                }
+                display(subranges);
+                if(subranges.find(cust) != subranges.end()) {
+                    --subranges[cust];
+                    printf("# ranges left for %d are %d", cust, subranges[cust]);
+                    if(subranges[cust] == 0) {
+                        printf("No password for client %d\n", cust);
+                        lsp_server_write(myserver, pld, strlen(pld), cust);
+                        subranges.erase(cust);
+                    }
+                }
+                assigned.erase(connid);
+                set<int>::iterator it = available.begin();
+                while(!available.empty())
+                {
+                    it = available.begin();
+                    if(!pending.empty())
+                    {
+                        curr = pending.front();
+                        int drone = *it;
+                        assigned.insert(pair<int, request>(drone, curr));
+                        sprintf(pld, "c %s %s %s", curr.hash, curr.lower, curr.higher);
+                        lsp_server_write(myserver, pld, strlen(pld), drone);
+                        printf("Before allocating\n");
+                        dump();
+                        printf("Aftre allocating\n");
+                        ++it;
+                        available.erase(drone);
+                        dump();
+                        display(assigned);
+                        pending.pop_front();
+                    }
+                    else break;
+                }
+            }
+            else printf("Corrupt/malformed LSP pkt\n");
         }
-        if(pthread_mutex_unlock(&lock_info) < 0)perror("Mutex in epochthread");
-        sleep(2);
     }
-    return NULL;
-}
-
-int main()
-{
-    int sockfd; //socket
-    int portno; // port to listen on
-    struct sockaddr_in serveraddr; // server's addr
-    int optval; // flag value for setsockop
-    portno = 2700;
-    pthread_t tid1, tid2, tid3;
-    //create parent socket
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd < 0)
-        perror("ERROR opening socket");
-    optval = 1;
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR,
-               (const void *)&optval , sizeof(int));
-
-    //build the server's Internet address
-    memset((char *) &serveraddr, 0, sizeof(serveraddr));
-    serveraddr.sin_family = AF_INET;
-    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    serveraddr.sin_port = htons((unsigned short)portno);
-    // bind: associate the parent socket with a port
-    if (bind(sockfd, (struct sockaddr *) &serveraddr, sizeof(serveraddr)) < 0)
-        perror("ERROR on binding");
-    args ar;
-    ar.fd = sockfd;
-    pthread_mutex_init(&lock_info, NULL);
-    pthread_create(&tid2, NULL, &recv_thread, (void*)&ar);
-    pthread_create(&tid3, NULL, &epoch_thread, (void*)&ar);
-    const char* msg = "ser hi";
-    char s[10];
-
-    while(info.size() == 0)usleep(10);
-    pthread_mutex_lock(&lock_info);
-    info.begin()->second.outbox.enque(msg);
-    info.begin()->second.outbox.enque(msg);
-    info.begin()->second.outbox.enque(msg);
-    info.begin()->second.outbox.enque(msg);
-    pthread_mutex_unlock(&lock_info);
-    sleep(10);
-    pthread_mutex_lock(&lock_info);
-    while(info.begin()->second.inbox.deque(s) > 0)
-    {
-        printf("From main: appln reads '%s'\n", s);
-    }
-    pthread_mutex_unlock(&lock_info);
-    pthread_join(tid2, NULL);
-    pthread_join(tid3, NULL);
-    pthread_mutex_destroy(&lock_info);
+    //lsp_server_cleanup(myserver);
     return 0;
 }
